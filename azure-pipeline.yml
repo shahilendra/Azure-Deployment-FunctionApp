@@ -1,0 +1,145 @@
+resources:
+- repo: self
+
+variables:
+  azureSubscriptionDev: 'DEV Subscription'
+
+  azureSubscriptionStage: 'STAGE Subscription'
+
+  azureSubscriptionProd: 'PROD Subscription'
+
+  functionAppNameDev: 'demo-dev-func'
+
+  functionAppNameStage: demo-stage-func'
+
+  functionAppNameProd: 'demo-prod-func'
+
+  vmImageName: 'windows-latest'
+
+stages:
+- stage: Build
+  displayName: Build stage
+
+  jobs:
+  - job: Build
+    displayName: 'Build'
+    pool:
+      vmImage: $(vmImageName)
+
+    steps:
+    - task: NuGetToolInstaller@1
+      displayName: 'Use NuGet '
+     
+    - task: DotNetCoreCLI@2
+      displayName: 'NuGet Restore'
+      inputs:
+        command: restore
+        projects: '**/*.csproj'
+        vstsFeed: 'demo'
+
+    - task: NuGetCommand@2
+      inputs:
+        command: 'restore'
+        restoreSolution: '**/*.sln'
+        feedsToUse: 'select'
+
+    - task: DotNetCoreCLI@2
+      displayName: Build
+      inputs:
+        command: 'build'
+        projects: |
+          **/*.csproj
+        arguments: --output $(System.DefaultWorkingDirectory)/publish_output --configuration Release
+
+    - task: ArchiveFiles@2
+      displayName: 'Archive files'
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)/publish_output'
+        includeRootFolder: false
+        archiveType: zip
+        archiveFile: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+        replaceExistingArchive: true
+
+    - publish: $(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip
+      artifact: drop
+
+- stage: Deployment_Dev
+  displayName: Deploy Dev
+  dependsOn: Build
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy Dev
+    environment: 'development'
+    pool:
+      vmImage: $(vmImageName)
+    variables:
+      - group: "group-1"
+      - group: "group-2"
+      - group: "group-3-dev"
+      - group: "group-4"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureFunctionApp@1
+            displayName: 'Azure functions app deploy'
+            inputs:
+              azureSubscription: '$(azureSubscriptionDev)'
+              appType: functionApp
+              appName: $(functionAppNameDev)
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+              AppSettings: '-FUNCTIONS_WORKER_RUNTIME $(FUNCTIONS_WORKER_RUNTIME) -AzureWebJobsStorage $(AzureWebJobsStorage)'
+- stage: Deployment_Stage
+  displayName: Deploy Stage
+  dependsOn: Deployment_Dev
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy Stage
+    environment: 'stage'
+    pool:
+      vmImage: $(vmImageName)
+    variables:
+      - group: "group-1"
+      - group: "group-2"
+      - group: "group-3-stage"
+      - group: "group-4"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureFunctionApp@1
+            displayName: 'Azure functions app deploy'
+            inputs:
+              azureSubscription: '$(azureSubscriptionStage)'
+              appType: functionApp
+              appName: $(functionAppNameStage)
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+              AppSettings: '-FUNCTIONS_WORKER_RUNTIME $(FUNCTIONS_WORKER_RUNTIME) -AzureWebJobsStorage $(AzureWebJobsStorage)'
+
+- stage: Deployment_Prod
+  displayName: Deploy Production
+  dependsOn: Deployment_Stage
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy Prod
+    environment: 'production'
+    pool:
+      vmImage: $(vmImageName)
+    variables:
+      - group: "group-1"
+      - group: "group-2"
+      - group: "group-3-prod"
+      - group: "group-4"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureFunctionApp@1
+            displayName: 'Azure functions app deploy'
+            inputs:
+              azureSubscription: '$(azureSubscriptionProd)'
+              appType: functionApp
+              appName: $(functionAppNameProd)
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+              AppSettings: '-FUNCTIONS_WORKER_RUNTIME $(FUNCTIONS_WORKER_RUNTIME) -AzureWebJobsStorage $(AzureWebJobsStorage)'
